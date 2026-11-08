@@ -29,9 +29,16 @@
   .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
   .tile { border: 2px solid transparent; background: var(--card); border-radius: 16px; padding: 4px; text-align: center; cursor: pointer; transition: transform .12s, border-color .12s; }
   .tile img { width: 100%; aspect-ratio: 3 / 4; object-fit: contain; display: block; }
+  .tile .noimg { aspect-ratio: 3 / 4; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 700; color: var(--ink); background: var(--pink-soft); border-radius: 12px; }
   .tile span { display: block; font-size: 12px; color: var(--sub); padding: 2px 0 4px; }
   .tile.on { border-color: var(--pink); transform: scale(1.03); background: var(--pink-soft); }
   .inc-mode .tile.on { border-color: var(--green); background: var(--green-soft); }
+  .goal-zone { margin-top: 14px; background: var(--green-soft); border: 2px dashed #5DCAA5; border-radius: 18px; padding: 10px; }
+  .goal-zone h3 { margin: 0 0 8px; font-size: 14px; color: #085041; display: flex; align-items: center; gap: 6px; }
+  .goal-zone h3 small { font-weight: 400; color: #0F6E56; }
+  .goal-zone .tile { background: #fff; position: relative; }
+  .goal-zone .tile.on { border-color: var(--green); background: #fff; }
+  .goal-zone .tile::after { content: '🎯 เข้าเป้าหมาย'; position: absolute; top: 4px; left: 4px; font-size: 10px; background: #1D9E75; color: #fff; padding: 2px 6px; border-radius: 999px; }
   .amount { display: flex; align-items: center; background: var(--card); border: 2px solid var(--line); border-radius: 16px; padding: 4px 16px; }
   .amount:focus-within { border-color: var(--pink); }
   .amount input { border: 0; outline: 0; font: inherit; font-size: 32px; font-weight: 700; width: 100%; padding: 6px 0; color: var(--ink); background: transparent; }
@@ -71,7 +78,7 @@
   </div>
 
   <div class="label">เลือกหมวด <small id="catName"></small></div>
-  <div class="grid" id="cats"></div>
+  <div id="cats"></div>
   <div class="err" id="errCat"></div>
 
   <div class="label">จำนวนเงิน</div>
@@ -82,7 +89,7 @@
   <input class="field" id="item" placeholder="เช่น ชาไข่มุก" maxlength="60">
 
   <div id="chBox">
-    <div class="label">ช่องทางจ่าย</div>
+    <div class="label" id="chLabel">ช่องทางจ่าย</div>
     <div class="chips" id="channels"></div>
   </div>
 
@@ -119,13 +126,15 @@ const DEFAULT_CONFIG = {
     ['สุขภาพ','รายจ่าย','Needs','07_health.png'],['สอบเข้าป.โท','รายจ่าย','Needs','08_master_exam.png'],
     ['ครีม,ดูแลตัวเอง/เสื้อผ้า','รายจ่าย','Wants','09_beauty_clothes.png'],['เครื่องดื่ม','รายจ่าย','Wants','10_drinks.png'],
     ['อื่นๆ','รายจ่าย','Wants','11_other.png'],['บ้าน','รายจ่าย','Needs','13_home.png'],
-    ['เก็บออม','รายจ่าย','Savings','12_savings.png'],['จ่ายบัตรเครดิต','รายจ่าย','Transfer','14_credit_card_payment.png'],
+    ['เก็บออม','รายจ่าย','Savings','12_savings.png'],['ลงทุน','รายจ่าย','Invest',''],['จ่ายบัตรเครดิต','รายจ่าย','Transfer','14_credit_card_payment.png'],
     ['เงินเดือน','รายรับ','Income','15_income.png'],['โบนัส','รายรับ','Income','15_income.png'],['รายรับอื่นๆ','รายรับ','Income','15_income.png']
   ].map(([name, type, group, icon]) => ({ name, type, group, icon })),
-  channels: [{ name: 'โอน', isDefault: true, icon: 'ch_transfer.png' }, { name: 'บัตรเครดิต', isDefault: false, icon: 'ch_credit.png' }],
+  channels: [{ name: 'โอน', isDefault: true, icon: 'ch_transfer.png' }, { name: 'บัตร KTC', icon: 'ch_credit.png', isCard: true },
+    { name: 'บัตร SCB', icon: 'ch_credit.png', isCard: true }, { name: 'บัตร Bangkok Bank', icon: 'ch_credit.png', isCard: true }],
   goals: [{ name: 'ปลดหนี้บัตรเครดิต', category: 'จ่ายบัตรเครดิต' }, { name: 'เที่ยวญี่ปุ่น', category: 'เก็บออม' }]
 };
 const LABELED = new Set(['รายจ่าย']); // รูปหมวดรายจ่ายมีป้ายชื่อในรูปแล้ว
+const GOAL_GROUPS = ['Savings', 'Invest', 'Transfer']; // หมวดที่เข้าเป้าหมาย แสดงแยกในกรอบสีเขียว
 
 let cfg = DEFAULT_CONFIG, state = { type: 'รายจ่าย', cat: null, channel: null }, inLine = false;
 const $ = id => document.getElementById(id);
@@ -135,17 +144,29 @@ const isoDay = off => { const d = new Date(); d.setDate(d.getDate() + off); retu
 function renderCats() {
   document.body.classList.toggle('inc-mode', state.type === 'รายรับ');
   const list = cfg.categories.filter(c => c.type === state.type);
-  $('cats').innerHTML = list.map(c => `
+  const tile = c => `
     <button type="button" class="tile${state.cat === c.name ? ' on' : ''}" data-cat="${c.name}" aria-label="${c.name}">
-      <img src="icons/${c.icon || '11_other.png'}" alt="" loading="lazy">
-      ${LABELED.has(c.type) && c.icon ? '' : `<span>${c.name}</span>`}
-    </button>`).join('');
+      ${c.icon ? `<img src="icons/${c.icon}" alt="" loading="lazy">` : `<div class="noimg">${c.name}</div>`}
+      ${LABELED.has(c.type) && c.icon || !c.icon ? '' : `<span>${c.name}</span>`}
+    </button>`;
+  const normal = list.filter(c => !GOAL_GROUPS.includes(c.group)), special = list.filter(c => GOAL_GROUPS.includes(c.group));
+  $('cats').innerHTML = `<div class="grid">${normal.map(tile).join('')}</div>` +
+    (special.length ? `<div class="goal-zone"><h3>🎯 เข้าเป้าหมาย <small>ออม · ลงทุน · จ่ายหนี้</small></h3><div class="grid">${special.map(tile).join('')}</div></div>` : '');
   $('catName').textContent = state.cat || '';
   $('chBox').classList.toggle('hide', state.type === 'รายรับ');
-  renderGoals();
+  renderGoals(); renderChannels();
+}
+function channelChoices() {
+  const cat = cfg.categories.find(c => c.name === state.cat);
+  if (cat && cat.group === 'Transfer') return cfg.channels.filter(c => c.isCard);       // จ่ายบัตร: เลือกบัตรที่จะจ่าย
+  if (cat && GOAL_GROUPS.includes(cat.group)) return cfg.channels.filter(c => !c.isCard); // ออม/ลงทุน: เงินจากบัญชี
+  return cfg.channels;
 }
 function renderChannels() {
-  $('channels').innerHTML = cfg.channels.map(c => `
+  const list = channelChoices(), isPay = (cfg.categories.find(c => c.name === state.cat) || {}).group === 'Transfer';
+  if (!list.some(c => c.name === state.channel)) state.channel = ((isPay ? list[0] : list.find(c => c.isDefault)) || list[0] || {}).name;
+  $('chLabel').textContent = isPay ? 'จ่ายบัตรใบไหน' : 'ช่องทางจ่าย';
+  $('channels').innerHTML = list.map(c => `
     <button type="button" class="chip${state.channel === c.name ? ' on' : ''}" data-ch="${c.name}">
       <img src="icons/${c.icon || 'ch_transfer.png'}" alt="">${c.name}
     </button>`).join('');
